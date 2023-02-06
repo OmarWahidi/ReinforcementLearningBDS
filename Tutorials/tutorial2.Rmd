@@ -1,0 +1,259 @@
+---
+title: "Tutorial 2 - Thompson Sampling"
+author: "Floris Holstege"
+date: "August 2022"
+output:
+  pdf_document:
+    fig_caption: yes
+header-includes: 
+  \usepackage{float} 
+  \usepackage{booktabs} % To thicken table lines
+---
+
+```{r setup, include=FALSE}
+
+# Packes required for subsequent analysis. P_load ensures these will be installed and loaded. 
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse,
+               ggplot2,
+               devtools,
+               BiocManager,
+               contextual
+               )
+```
+
+In this problem set, we will be covering Thompson Sampling methods to solve multi-armed bandit problems. 
+
+
+# Dataset
+
+Today, we will work with a dataset from ZOZO. ZOZO is the largest Japanese fashion e-commerce company. The company uses multi-armed bandit algorithms to recommend fashion items to users in a large-scale fashion e-commerce platform. 
+
+We will first work with a version of the dataset which contains 10 fashion items. Each row contains an fashion item randomly shown to a user, and if the user clicked on said fashion item. It contains +300k observations. The fashion items were randomly shown to users, which makes this dataset suitable for evaluating our TS algorithm. 
+
+
+```{r}
+
+
+# this version contains 10 arms
+dfZozo_10 <- read.csv('../../data/clean/zozo_data/zozo_noContext_10items.csv')%>%
+  select(item_id, click)
+
+
+```
+
+
+
+# Thompson Sampling: notation
+
+When working with the $\epsilon$-greedy algorithm, we estimate the expected reward using the average reward up until that point. With Thompson sampling, we take a different approach; instead of expected reward, we try to find out the distribution of the reward. This is done in three steps:
+\begin{enumerate}
+  \item Let $Q_t(a)$ follow a beta distribution: $f(x: \alpha_t, \beta_t) = \frac{\Gamma(\alpha_t + \beta_t)}{\Gamma(\alpha_t) \cdot \Gamma(\beta_t)}x ^{\alpha_t - 1}(1-x)^{\beta_t - 1}$. At $t=0$, every arm follows the same beta distribution with $\alpha_0=1, \beta_0=1$. 
+  \item At each $t$, the algorithm samples $n_{\mathrm{sample}}$ observations from each of the distributions. The arm which has the highest average reward according to the sample is the chosen arm. 
+  \item We then observe the reward $r_t$, and update the parameters of the distribution accordingly. 
+  \begin{itemize}
+    \item $\alpha_t = \alpha_{t-1} + r_t$
+    \item $\beta_t = \beta_{t-1} + 1 - r_t$
+  \end{itemize}
+\end{enumerate}
+
+\textbf{Task 1: select from the dataframe below an arm according to the Thompson Sampling algorithm}. Per arm, the alpha and beta parameters have been given. Use $n_{\mathrm{sample}}=100$.
+
+```{r}
+
+# set the seed
+set.seed(0)
+
+# arm index
+arm <- 1:10
+
+# alpha per arm
+alpha <- c(10,2,9,3,1,8,7,4,6,5)
+
+# beta per arm
+beta <- c(1,8,3, 2,4,7,6,5,9,10)
+
+# dataframe with alpha, beta per arm
+df_alpha_beta <- data.frame(arm=arm,alpha = alpha, beta = beta)
+
+# number of samples to draw
+n_sample=100
+
+# TODO: select arm based on thompson sampling
+
+```
+# Thompson Sampling: code
+
+We will be simulating the performance of the Thompson Sampling algorithm on the Zozo data.
+
+To do so easily, we are using the _contextual_ package in R. The documentation for this package can be found \href{ https://nth-iteration-labs.github.io/contextual/}{here}. This package allows for easy simulation and implementation of various multi-armed bandit algorithms. For each simulation, one needs to define a (1) bandit, which draws the rewards per arm, (2) an policy/algorithm for pulling arms of the bandit, and (3) an simulator which simulates the performance of the policy/algorithm given the bandit. 
+
+Below, we go over an example of how one can use the package. Let's start by simply applying the Thompson Sampling algorithm to the ZOZO data. We (1) define a bandit, (2) a policy/algorithm and (3) and agent. 
+
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+
+# set the seed
+set.seed(0)
+
+## OfflineReplayEvaluatorBandit: simulates a bandit based on provided data
+#
+# Arguments:
+#
+#   data: dataframe that contains variables with (1) the reward and (2) the arms
+#
+#   formula: should consist of variable names in the dataframe. General structure is: 
+#       reward variable name ~ arm variable name
+#
+#   randomize: whether or not the bandit should receive the data in random order,
+#              or as ordered in the dataframe.
+#
+
+# in our case, create a bandit for the data with 20 arms, 
+#   formula = click ~ item_id, 
+#   no randomization 
+bandit_Zozo_10 <- OfflineReplayEvaluatorBandit$new(formula = click ~ item_id,
+                                                   data = dfZozo_10,
+                                                   randomize = FALSE)
+
+
+# lets generate a 10 simulations, each of size 100.000,
+size_sim=100000
+n_sim=10
+
+# here we define the Thompson Sampling policy object
+TS          <- ThompsonSamplingPolicy$new()
+
+# the contextual package works with 'agent' objects - which consist of a policy and a bandit
+agent_TS_zozo_10 <-  Agent$new(TS, # add policy
+                               bandit_Zozo_10) # add bandit
+
+
+## simulator: simulates a bandit + policy based on the provided data and parameters
+#
+# Arguments:
+#
+#   agent: the agent object, previously defined
+#
+#   horizon: how many observations from dataset used in the simulation
+#
+#   do_parallel: if True, runs simulation in parallel
+#
+#   simulations: how many simulations?
+#
+
+simulator          <- Simulator$new(agent_TS_zozo_10, # set our agent
+                                      horizon= size_sim, # set the sizeof each simulation
+                                      do_parallel = TRUE, # run in parallel for speed
+                                      simulations = n_sim, # simulate it n_sim times
+                                  )
+  
+  
+# run the simulator object  
+history_TS_zozo_10            <- simulator$run()
+
+# gather results
+df_TS_zozo_10 <- history_TS_zozo_10$data %>%
+  select(t, sim, choice, reward, agent) 
+
+
+
+```
+
+Now that we have gathered the results, let's dive a little bit deeper into each component. First, the bandit object, _OfflineReplayEvaluatorBandit_. The idea behind this function is that it 'replays' the results of an algorithm/policy based on random data. Once an algorithm picks an arm, for instance arm 1, it takes the first observation of arm 1 in the dataset. If the algorithm again picks arm 1, it again samples the next observation from arm 1, etc. 
+
+
+\newpage 
+Let us calculate per simulation (1-10), the maximum number of observations. 
+
+```{r}
+df_TS_zozo_10_max_t <- df_TS_zozo_10%>%
+  group_by(sim) %>% # group by per agent
+  summarize(max_t = max(t)) # get max t
+
+df_TS_zozo_10_max_t
+```
+
+
+\textbf{Task 2: answer below: why is the maximum number of observations different for each simulation?}
+
+\textbf{Answer}: 
+
+
+In the dataframe _df_TS_zozo_ we have gathered the results of the TS policy for $c=0.1$. This dataframe contains the following columns: 
+\begin{itemize}
+\item \textbf{$t$}: the step at which a choice was made
+\item \textbf{sim}: the simulation for which we observe results
+\item \textbf{choice}: the choice made by the algorithm
+\item \textbf{reward}: the reward observed by the algorithm
+\item \textbf{agent}: column containing the name of the agent 
+\end{itemize}
+
+\textbf{Task 3: using this dataframe, make a plot of the average cumulative rewards for all simulations, together with the 95\% confidence interval}. 
+
+
+
+```{r}
+
+# Max of observations. Depends on the number of observations per simulation
+max_obs=9000
+
+
+# TODO: add plot of the average cumulative rewards for all simulations, 
+# together with the 95\% confidence interval}. 
+
+```
+
+
+\newpage 
+As stated at the start, we only have 10 arms for the ZOZO data. However, there are also versions of the data with 20 and 40 arms. These are loaded for you below. 
+
+
+
+\textbf{Task 4: repeat the steps in the tutorial above, but now for the data 40 arms. Make a plot that compares the average cumulative reward (with 95\% confidence interval) for 10 and 40 arms. For which version does Thompson Sampling perform better?}. 
+
+
+```{r}
+
+# this version contains 20, 40 arms
+dfZozo_40 <- read.csv('../../data/clean/zozo_data/zozo_noContext_20items.csv')%>% 
+  select(item_id, click)
+
+
+```
+
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+# set the seed
+set.seed(0)
+
+# TODO: add plot that compares average cumulative reward  
+# (with 95\% confidence interval) for 10 and 40 arms
+
+```
+
+
+\newpage
+# Challenge: aggregation
+
+The following part of the tutorial is not mandatory, and seeks to provide extra insight into some of the challenges related to multi-armed bandits for those that are interested. This week's challenge is aggregation; what is the unit of analysis per bandit? so far, we have  always worked with 1 multi-armed bandit that serves a set of customers with 10 arms. But this is not the only form of aggregation: are many different specifications of the multi-armed bandit problem. 
+
+\begin{itemize}
+\item For instance, on a website you might have multiple spots to show products. One might decide to have a bandit per spot on the website. In the case of the ZOZO dataset, there are 3 spots on the page to show products. This increases the number of bandits from 1 to 3. 
+\item One could also have a bandit per customer. Imagine we have 10 users that very frequently visit our website. In this case, the number of bandits goes from 1 to 10. 
+\item We might have a bandit per spot per customer. In the case of the ZOZO dataset, if we take the 10 most frequent visitors, this would mean having $3 \cdot 10 = 30$ bandits.
+\item There are a myriad of ways one can aggregate; for instance, per type of product on the ZOZO website (shirts, shoes, etc. ) or broader categories (Male clothing, Female clothing, etc.)
+
+
+\end{itemize}
+
+\textbf{Challenge}: compare current results (expected reward or regret) against results using a different level of aggregation based on the heterogeneity of user features. For example, you might cluster the users with the features, and have a different bandit per cluster. 
+
+```{r}
+# TODO add challenge
+
+
+```
+
+
+

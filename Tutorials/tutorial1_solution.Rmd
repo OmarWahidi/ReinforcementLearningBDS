@@ -1,0 +1,442 @@
+---
+title: "Problem Set 1 - Epsilon-Greedy and Calculating Regret (Solution)"
+author: "Floris Holstege"
+date: "7/6/2022"
+output:
+  pdf_document:
+    fig_caption: yes
+header-includes:
+  \usepackage{float}
+  \usepackage{booktabs} % To thicken table lines
+  \usepackage{unicode-math}
+
+---
+
+
+# Introduction
+In this problem set, we will be covering two concepts.
+
+\begin{itemize}
+  \item \textbf{The $\epsilon$-Greedy Algorithm}: a multi-armed bandit algorithm. In short, this algorithm picks in $\epsilon$ \% of cases a random arm (exploration). In 1-$\epsilon$- \% of cases, pick the arm with at that point the highest average reward (exploitation).
+  \item \textbf{Regret calculation}: in this case, regret means the reward foregone reward from the algorithm (in this case, the arms chosen by the $\epsilon$-Greedy Algorithm) in comparison to the best arm. One can think of regret as the amount of reward lost from not having hindsight knowledge of what the best arm is.
+ 
+\end{itemize}
+
+\textcolor{red}{Before going further:} check that you have R, R markdown and tinytex correctly installed. Tutorial 0 provides instructions for doing so.
+
+
+# Loading libraries
+
+Before starting the problem set, make sure you have all the libraries installed that are needed. Simply run this chunk below.
+
+```{r, echo = T, results = 'hide', message=FALSE}
+
+# Packes required for subsequent analysis. P_load ensures these will be installed and loaded.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(dplyr,
+               tidyr,
+               ggplot2,
+               reshape2,
+               latex2exp
+               )
+
+# If you do not have tinytex installed, uncomment the command below for knitting the pdf
+#tinytex::install_tinytex()
+
+```
+
+# Dataset
+
+We will explore the concepts from this problem set with a dataset from Yahoo. This dataset contains for 10 articles when that article was shown to a user, and if the user clicked on said article. The data is from a single day and contains +400k observations. It contains three columns:
+
+\begin{itemize}
+  \item \textbf{arm}: the index of the article shown to the user (1-10)
+  \item \textbf{reward}: 0 if an user did not click on the article, 1 if an user did click on the article
+  \item \textbf{index}: unique id of the arm-reward combination. 
+\end{itemize}
+
+
+Each observation is an arm and the respective reward for showing that arm to an user. The articles were randomly shown to users, which makes this dataset suitable for evaluating our $\epsilon$-Greedy Algorithm.
+
+```{r, load data}
+# reads in full csv of Yahoo dataset
+dfYahoo <- read.csv('../../data/clean/yahoo_data/yahoo_day1_10arms.csv')[,-c(1,2)]
+
+# selects the two relevant columns from Yahoo dataset; arm shown to user and reward observed
+dfYahoo_for_sim <- dfYahoo %>% select(arm, reward)
+dfYahoo_for_sim$index <- 1:nrow(dfYahoo_for_sim)
+
+```
+
+# $\epsilon$-Greedy Algorithm: theory
+
+Before delving into the algorithm, let's introduce some notation. $a \in \mathcal{A}$ indicates an arm available to our algorithm from the set of all available arms $\mathcal{A}$. I denote $a_t$ as the chosen arm at time $t$. For reward $r$, we observe at $t$ the reward $r_t$ for arm $a$.  Our goal is to choose the action with the highest reward: $Q^*(a) = E(r_t |a_t = a)$. The problem is that we do not know $r_t$, and thus need to estimate $Q^*(a)$. Let this estimate be called $Q_t(a)$. The most basic way of making this estimate is by simply taking the average reward for an arm $a$ up until that point. Let $N_t(a)$ be the number of times $a$ is chosen up until moment $t$. Let $R_1, R_2, ..., R_{N_t(a)}$ be the rewards for $a$. Then:
+
+\begin{align}
+  Q_t(a) = \frac{R_1 + R_2 + ...+ R_{N_t(a)}}{N_t(a)}
+\end{align}
+
+In the case of a greedy algorithm, our chosen arm $a_t = \mathrm{argmax}_{a \in \mathcal{A}} Q_t(a)$. In the case of an $\epsilon$-Greedy Algorithm, we pursue the greedy option in $(1-\epsilon)$\% of cases, and in $\epsilon$\% of cases we select a random arm. Thus, $\epsilon$ determines the degree of exploitation (greedy) vs. exploration (random choice). More formally, in the case of an $\epsilon$-Greedy Algorithm, our chosen arm becomes:
+
+\begin{align}
+  a_t = \begin{cases} 1-\epsilon &  \mathrm{argmax}_{a \in \mathcal{A}} Q_t(a) \\
+ \epsilon & a \in_R \mathcal{A} \end{cases},
+\end{align}
+
+where $a \in_R \mathcal{A}$ denotes a random chosen arm from the set of available arms $\mathcal{A}$.
+
+
+# $\epsilon$-Greedy Algorithm: code
+
+We will code up our own version of the $\epsilon$-Greedy algorithm in two steps. First, you will code a function that based on a set of arms and rewards, selects an arm according to the $\epsilon$-Greedy algorithm. Second, this tutorial will provide a function for simulating the $\epsilon$-Greedy algorithm on the Yahoo dataset. 
+
+\textbf{Task 1: finish the function specified below. }
+Given a set of arms and rewards, we want a function called 'policy_greedy' that selects an arm. It should do so in line with equation (2). The outline of the function is specified below - you only have to fill in the part that states 'TODO'. \\
+
+
+Your function should return an integer which indexes which arm (1-10) is the chosen arm. In order to check if your code works, set $\epsilon=0$ - it then should return 3. Then, set $\epsilon=0.5$. Now, in 50\% of cases it should return 3, and in 50\% cases another random number.   
+
+
+
+
+```{r, function for greedy pick}
+# grab first 100 observations, create dataframe to practice for policy_greedy() function
+df_practice <- dfYahoo_for_sim[1:100,]
+
+# set value of epsilon parameter
+eps = 0.
+
+#####
+# policy_greedy : picks an arm, based on the greedy algorithm for multi - armed bandits
+#
+# Arguments :
+#  df: data.frame with two columns: arm, reward
+#  eps : float, percentage of times a random arm needs to be picked
+#  n_arms: integer, the total number of arms available. Standard value is 10.
+#
+# Output :
+# chosen_arm ; integer, index of the arm chosen
+####
+policy_greedy <- function(df, eps, n_arms=10){
+  
+  # draws a random float between 0 and 1
+  random_uniform_variable <- runif(1, min=0, max=1)
+  
+  # in epsilon % of cases, pick a random arm 
+  if (random_uniform_variable < eps){
+    
+    # sample uniform random arm between 1-n_arms
+    chosen_arm <- sample(1:n_arms,1 )
+    
+  # in (1-epsilon)% of cases, pick the arm that has the highest average reward    
+  }else{
+    
+    # create dataframe; per arm it shows
+    #   - reward_size: total reward for arm
+    #   - sample_size: total observations for arm
+    #   - succes_rate: total reward/total observations per arm
+    df_reward_overview <- df %>%
+      drop_na() %>%
+      group_by(arm)%>%
+      summarise(reward_size = sum(reward, na.rm=TRUE),
+                sample_size = n(),
+                succes_rate = reward_size/sample_size
+      )
+    # pick the arm with the highest success rate
+    chosen_arm <- which.max(df_reward_overview$succes_rate)
+  }
+  # return the chosen arm
+  return(chosen_arm)
+}
+# get the chosen arm from the function
+chosen_arm_practice <- policy_greedy(df_practice, eps)
+print(paste0('The chosen arm is: ', chosen_arm_practice))
+
+```
+
+
+Now that we have this function, we can use it to simulate an $\epsilon$-Greedy algorithm for the Yahoo dataset. Before the simulation starts, there is an initial period in which we gather some information about the arms. In this period, users are randomly exposed to articles. Based on this initial information, we then start our  $\epsilon$-Greedy algorithm to pick the articles.. For $n_{\text{before simulation}}$ steps we gather information, and for $n_{simulation}$ steps we simulate our algorithm. 
+
+
+
+The function on the next page simulates the performance of our $\epsilon$-Greedy algorithm.  \textbf{Task 2: finish the function specified below. }
+
+
+```{r, function for sim}
+
+###
+# sim_greedy: simulates performance of an epsilon-greedy policy 
+# 
+#   Arguments: 
+#
+#     df: n x 3 data.frame, with column names "arm", "reward", "index"
+#
+#     n_before_sim: integer, number of observations (randomly sampled) 
+#                   before starting the epsilon-greedy algorithm
+#
+#     n_sim: integer, number of observations used to simulate the
+#            performance of the epsilon-greedy algorithm
+#
+#     epsilon: float between 0 and 1. In  epsilon%  of cases,
+#              randomly explore other arms. In 1-epsilon %, pick arm 
+#              that has highest average reward up until that point.
+#
+#     interval: the number of steps after which our arm is updated. 
+#               For example, interval is 5 means that when an arm
+#               is chosen by our approach, it is deployed for 5 steps. 
+#     
+#
+#   Output: list with following
+#     df_results_of_policy: n_sim x 2 data.frame, with "arm", "reward". 
+#                           Random sampled rewards for chosen arms
+#
+#     df_sample_of_policy: data.frame with sample used to evaluate policy. 
+#     
+#
+#   
+###
+sim_greedy <- function(df, n_before_sim,n_sim,epsilon, interval=1){
+  
+  ## Part 1: create two dataframes, one with data before start of policy, and one with data after
+  
+  # define the number of observations of all data available
+  n_obs <- nrow(df)
+
+  # Give user a warning: the size of the intended experiment is bigger than the data provided
+  if(n_sim > (n_obs-n_before_sim)){
+    stop("The indicated size of the experiment is bigger than the data provided - shrink the size ")
+  }
+
+  # find n_before_sim random observations to be used before start policy
+  index_before_sim <- sample(1:n_obs,n_before_sim)
+  
+  # using indexing, create dataframe with data before start policy
+  df_before_policy <- df[index_before_sim,]
+  
+  # save dataframe with all the results at t - to begin with those before the policy
+  df_results_at_t <- df_before_policy %>% select(arm, reward)
+  
+  # create dataframe with data that we can sample from during policy
+  df_during_policy <- df[-index_before_sim,]
+  
+  # dataframe where the results of storing the policy are stored
+  df_results_policy <- data.frame(matrix(NA, nrow = n_sim, ncol = 2))
+  colnames(df_results_policy) <- c('arm', 'reward')
+  
+  ## part 2: appply epsilon-greedy algorithm, updating at interval
+  i = 1
+  while(i <= n_sim){
+    
+    # update at interval
+    if((i==1) || ((i %% interval)==0)){
+      # pick an arm according to the 'greedy' policy
+      chosen_arm <- policy_greedy(df_results_at_t, epsilon)
+      current_arm <- chosen_arm
+    }else{
+      # if not updating, take current arm
+      chosen_arm <- current_arm
+    }
+    
+
+    # select from the data for experiment the arm chosen
+    df_during_policy_arm <- df_during_policy %>% 
+      filter(arm==chosen_arm)
+    
+    # randomly sample from this arm and observe the reward
+    sampled_arm <- sample(1:nrow(df_during_policy_arm), 1)
+    reward <- df_during_policy_arm$reward[sampled_arm ]
+    
+    # important: remove the reward from the dataset to prevent repeated sampling
+    index_result <- df_during_policy_arm$index[sampled_arm]
+    df_during_policy_arm <- df_during_policy_arm %>% filter(index == index_result)
+
+    # warn the user to increase dataset or downside the size of experiment, 
+    # in the case that have sampled all observations from an arm
+    if(length(reward) == 0){
+      stop("You have run out of observations from a chosen arm")
+      break
+    }
+    
+    # get a vector of results from chosen arm (arm, reward)
+    result_policy_i <- c(chosen_arm, reward)
+    
+    # add to dataframe to save the result
+    df_results_policy[i,] <- result_policy_i
+    
+    # combine to dataframe with all results
+    df_results_at_t <- rbind(df_results_at_t, result_policy_i)
+
+    # onto the next
+    i <- i + 1
+    
+  }
+  
+
+  # save results in list
+  results <- list(df_results_of_policy = df_results_policy,
+                  df_sample_of_policy = df[-index_before_sim,])
+  
+  return(results)
+  
+}
+
+```
+
+
+\textbf{Task 3: simulate the epsilon greedy algorithm. }
+With the 'sim_greedy' function, run the epsilon greedy algorithm for the following parameters: $n_{\text{before simulation}} = 100$, $n_{simulation} = 1000$, $\epsilon = 0.1$ and $\epsilon = 0.25$. Calculate the total reward based on the returned 'df_results_of_policy'. 
+
+
+```{r, simulate greedy algorithm, echo = T, results = 'hide', message=FALSE}
+
+# set parameters: observations before start simulation, then how many observations for simulation
+n_before_sim = 100
+n_sim = 1000
+
+# set the seed
+set.seed(0)
+
+# with epsilon = 0.1,
+result_sim_eps_01 <- sim_greedy(dfYahoo_for_sim,
+                                n_before_sim=n_before_sim,
+                                n_sim=n_sim,
+                                epsilon=0.1, 
+                                interval=1)
+# with epsilon = 0.25
+result_sim_eps_025 <- sim_greedy(dfYahoo_for_sim,
+                                 n_before_sim=n_before_sim,
+                                 n_sim=n_sim,
+                                 epsilon=0.25, 
+                                 interval=1)
+
+
+```
+
+\textbf{Task 4: plot performance for $t$ }
+Compare the performance of the algorithm for $\epsilon= 0.1$ and $\epsilon = 0.25$ using a plot. The x-axis should show the steps $t$, and the y-axis the cumulative reward at point $t$. Which one of these performs better? give a general explanation why we would expect this version of the algorithm to perform better?
+
+```{r, create plot}
+# create a dataframe with the results per epsilon. 
+# calculate the cumulative sum over time
+df_result_sims <- data.frame(t = 1:n_sim, 
+                             eps_01 = cumsum(result_sim_eps_01$df_results_of_policy$reward),
+                             eps_025 = cumsum(result_sim_eps_025$df_results_of_policy$reward))
+
+# melt the dataframe for ggplot visualization
+df_result_sims_melted <- melt(df_result_sims, id = 't')
+
+# create visualizaiton
+epsilon_comparison <- ggplot(data = df_result_sims_melted,  aes(x=t, y=value, col = variable)) + 
+  geom_line()+
+  theme_bw()+
+  xlab('Time')+
+  ylab('Total Reward')+
+  scale_color_manual(name = TeX('$\\epsilon$'),
+                     values = c( "darkblue",  "red"),
+                     labels = c('0.1', '0.25'))
+
+epsilon_comparison
+```
+
+
+\textbf{Task 5: the effect of different parameters }
+
+Let's keep $\epsilon=0.1$. What happens if you change $n_{\text{before simulation}}$ to 1000? Give an explanation why we observe the change in performance. 
+
+```{r, different param}
+
+# set the seed
+set.seed(0)
+
+
+# set parameters: observations before start simulation, then how many observations for simulation
+n_before_sim_longer = 1000
+
+# with epsilon = 0.1, n_before_sim=1000
+result_sim_eps_01_n_before_1000 <- sim_greedy(dfYahoo_for_sim,
+                                              n_before_sim=n_before_sim_longer,
+                                              n_sim=n_sim,
+                                              epsilon=0.1,
+                                              interval=1)
+
+
+
+```
+
+
+
+```{r}
+
+# set the seed
+set.seed(0)
+
+# dataframes with results of both options
+df_result_eps_01 <- result_sim_eps_01$df_results_of_policy
+df_result_eps_01_n_1000 <- result_sim_eps_01_n_before_1000$df_results_of_policy
+
+# create a dataframe with the results per epsilon. 
+# calculate the cumulative sum over time
+df_result_sims_param <- data.frame(t = 1:n_sim, 
+                             original = cumsum(df_result_eps_01$reward),
+                             n_before_sim_longer = cumsum(df_result_eps_01_n_1000$reward))
+# melt the dataframe for ggplot visualization
+df_result_sims_param_melted <- melt(df_result_sims_param, id = 't')
+
+# create visualizaiton
+ggplot(data = df_result_sims_param_melted,  aes(x=t, y=value, col = variable)) + 
+  geom_line()+
+  theme_bw()+
+  xlab('Time')+
+  ylab('Total Reward')+
+  scale_color_manual(name = TeX('$\\epsilon$'), 
+                     values = c( "purple",  "orange"), 
+                     labels = c('100 before sim', '1000 before sim'))
+
+```
+
+\textit{Extra:} if you have time left, consider implementing a grid-search to find the best combination for $n_{\text{before simulation}}$ and $\epsilon$. 
+
+# Calculating regret
+
+The unobserved best action-value is the average reward for arm $a$: $q^*(a) = E[r |a]$. The optimal value $V^* = \mathrm{max}_{a \in \mathcal{A}} \quad q^*(a)$. Regret is the opportunity loss given what we could have received, and what we did receive. Total regret at $t$  is then 
+
+\begin{align}
+L_t = E[\sum^t_{\tau = 1} V^* - Q(a_{\tau}) ]
+\end{align}
+
+
+Intuitively, it measures the difference between picking the arm with the best average reward, and the arms picked by our algorithm. 
+
+
+\newpage
+\textbf{Task 6: calculating the regret for $\epsilon =0.1$ }
+
+Based on equation (3), calculate the regret for the greedy algorithm when $\epsilon =0.1$. 
+
+
+
+```{r, calculating regret}
+
+# set the seed
+set.seed(0)
+
+# get per arm the average reward
+df_result_per_arm_sample <- result_sim_eps_01$df_sample_of_policy %>% 
+  group_by(arm) %>%
+  summarise(avg_reward = mean(reward))
+
+# average reward of best arm
+avg_reward_best_arm <- max(df_result_per_arm_sample$avg_reward)
+
+# total reward of the best arm
+total_reward_best_arm <- round(n_sim*avg_reward_best_arm,0)
+
+# total reward for our algorithm 
+total_reward_eps_01 <- tail(df_result_sims$eps_01, n=1)
+
+# regret
+regret = total_reward_best_arm-total_reward_eps_01
+
+print(paste0('Regret is: ',regret))
+```
+
